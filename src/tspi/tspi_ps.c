@@ -74,8 +74,13 @@ Tspi_Context_LoadKeyByUUID(TSS_HCONTEXT tspContext,		/* in */
 			if ((obj_rsakey_get_by_uuid(&info.parentKeyUUID, &keyHandle))) {
 				/* If that failed, look on disk, in User PS. */
 				if (ps_get_key_by_uuid(tspContext, &info.parentKeyUUID,
-						       &keyHandle))
-					return result;
+						       &keyHandle)) {
+					result = RPC_LoadKeyByUUID(tspContext, uuidData,
+								   &info, &tcsKeyHandle);
+					if (result)
+						return result;
+					goto cont;
+				}
 			}
 
 			if (obj_rsakey_get_policy(keyHandle, TSS_POLICY_USAGE,
@@ -92,6 +97,7 @@ Tspi_Context_LoadKeyByUUID(TSS_HCONTEXT tspContext,		/* in */
 		} else if (result)
 			return result;
 
+cont:
 		/*check if provided UUID has an owner evict key UUID prefix */
 		if (!memcmp(&uuidData, &owner_evict_uuid, sizeof(TSS_UUID)-1)) {
 			if ((result = obj_rsakey_add(tspContext, TSS_RSAKEY_FLAG_OWNEREVICT,

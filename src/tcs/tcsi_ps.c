@@ -494,6 +494,30 @@ TCS_GetRegisteredKeyBlob_Internal(TCS_CONTEXT_HANDLE hContext,	/* in */
 	return TSS_SUCCESS;
 }
 
+static TSS_RESULT
+CopyKeyInfo_Internal(TCS_LOADKEY_INFO * pLoadKeyInfo,	/* in, out */
+		     TSS_UUID *parentUuid,		/* in */
+		     TSS_UUID *KeyUUID,			/* in */
+		     UINT32 ordinal,			/* in */
+		     UINT32 keySize,			/* in */
+		     BYTE *keyBlob)			/* in */
+{
+	BYTE blob[1000];
+	UINT64 offset = 0;
+
+	/* set up a load key info struct */
+	memcpy(&pLoadKeyInfo->parentKeyUUID, parentUuid, sizeof(TSS_UUID));
+	memcpy(&pLoadKeyInfo->keyUUID, KeyUUID, sizeof(TSS_UUID));
+
+	/* calculate the paramDigest */
+	LoadBlob_UINT32(&offset, ordinal, blob);
+	LoadBlob(&offset, keySize, blob, keyBlob);
+	if (Hash(TSS_HASH_SHA1, offset, blob,
+		 (BYTE *)&pLoadKeyInfo->paramDigest.digest))
+		return TCSERR(TSS_E_INTERNAL_ERROR);
+	return 0;
+}
+
 TSS_RESULT
 TCSP_LoadKeyByUUID_Internal(TCS_CONTEXT_HANDLE hContext,	/* in */
 			    TSS_UUID *KeyUUID,			/* in */
@@ -508,6 +532,7 @@ TCSP_LoadKeyByUUID_Internal(TCS_CONTEXT_HANDLE hContext,	/* in */
 	UINT16 blobSize = sizeof(keyBlob);
 	UINT64 offset;
 	TCS_KEY_HANDLE parentTCSKeyHandle;
+	TCS_LOADKEY_INFO nullInfo;
 
 	if (TPM_VERSION_IS(1,2))
 		ordinal = TPM_ORD_LoadKey2;
@@ -572,27 +597,32 @@ TCSP_LoadKeyByUUID_Internal(TCS_CONTEXT_HANDLE hContext,	/* in */
 	 * If no errors have happend up till now, then the parent is loaded and ready for use.
 	 * The parent's TCS Handle should be in parentTCSKeyHandle.
 	 ******************************************************/
+
+	memset(&nullInfo, 0, sizeof(nullInfo));
+
+	if (memcmp(&nullInfo, pLoadKeyInfo, sizeof(nullInfo)) == 0) {
+		/*********************************************************
+		 * Do not fail by using the wrong auth on loading the key
+		 * rather give the caller the key info and have him call
+		 * again.
+		 ********************************************************/
+		result = CopyKeyInfo_Internal(pLoadKeyInfo, &parentUuid, KeyUUID, ordinal,
+					      keySize, keyBlob);
+		if (result)
+			return result;
+		return TCSERR(TCS_E_KM_LOADFAILED);
+	}
+
 	if ((result = LoadKeyByBlob_Internal(ordinal, hContext, parentTCSKeyHandle,
 					     keySize, keyBlob,
 					     NULL,
 					     phKeyTCSI, &keyslot))) {
 		LogDebugFn("LoadKeyByBlob_Internal returned 0x%x", result);
 		if (result == TCPA_E_AUTHFAIL && pLoadKeyInfo) {
-			BYTE blob[1000];
-
-			/* set up a load key info struct */
-			memcpy(&pLoadKeyInfo->parentKeyUUID, &parentUuid, sizeof(TSS_UUID));
-			memcpy(&pLoadKeyInfo->keyUUID, KeyUUID, sizeof(TSS_UUID));
-
-			/* calculate the paramDigest */
-			offset = 0;
-			LoadBlob_UINT32(&offset, ordinal, blob);
-			LoadBlob(&offset, keySize, blob, keyBlob);
-			if (Hash(TSS_HASH_SHA1, offset, blob,
-				 (BYTE *)&pLoadKeyInfo->paramDigest.digest))
-				result = TCSERR(TSS_E_INTERNAL_ERROR);
-
-			result = TCSERR(TCS_E_KM_LOADFAILED);
+			result = CopyKeyInfo_Internal(pLoadKeyInfo, &parentUuid, KeyUUID, ordinal,
+						      keySize, keyBlob);
+			if (result == 0)
+				result = TCSERR(TCS_E_KM_LOADFAILED);
 		}
 	}
 
