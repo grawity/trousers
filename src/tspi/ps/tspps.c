@@ -94,32 +94,27 @@ get_user_ps_path(char **file)
          */
         rc = snprintf(buf, sizeof (buf), "%s/%d", TSS_USER_PS_DIR, euid);
 #else
-	setpwent();
-	while (1) {
+	if (1) {
 #if (defined (__linux) || defined (linux) || defined(__GLIBC__))
-		rc = getpwent_r(&pw, buf, PASSWD_BUFSIZE, &pwp);
+		rc = getpwuid_r(euid, &pw, buf, PASSWD_BUFSIZE, &pwp);
 		if (rc) {
-			LogDebugFn("USER PS: Error getting path to home directory: getpwent_r: %s",
-				   strerror(rc));
-			endpwent();
+			LogDebugFn("USER PS: Error getting path to home directory: getpwuid_r: %s",
+			           strerror(rc));
 			return TSPERR(TSS_E_INTERNAL_ERROR);
 		}
 
 #elif (defined (__FreeBSD__) || defined (__OpenBSD__))
-		if ((pwp = getpwent()) == NULL) {
-			LogDebugFn("USER PS: Error getting path to home directory: getpwent: %s",
+		if ((pwp = getpwuid(euid)) == NULL) {
+			LogDebugFn("USER PS: Error getting path to home directory: getpwuid: %s",
                                    strerror(rc));
-			endpwent();
 			MUTEX_UNLOCK(user_ps_path);
 			return TSPERR(TSS_E_INTERNAL_ERROR);
 		}
 #endif
 		if (euid == pwp->pw_uid) {
                         home_dir = strdup(pwp->pw_dir);
-                        break;
                 }
         }
-        endpwent();
 
 	if (!home_dir)
 		return TSPERR(TSS_E_OUTOFMEMORY);
